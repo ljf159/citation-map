@@ -306,20 +306,22 @@
                        placeholder="输入Google Scholar个人主页URL，例如：https://scholar.google.com/citations?user=XXXXXX"
                        value="">
                 <button id="analyzeBtn" onclick="analyzeScholar()">开始分析</button>
+                <button id="demoBtn" onclick="loadDemo()" style="background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);">演示模式</button>
             </div>
             <div class="options">
                 <label>
                     分析论文数量：
-                    <input type="number" id="maxPapers" value="5" min="1" max="20">
+                    <input type="number" id="maxPapers" value="3" min="1" max="5">
                 </label>
                 <label>
                     每篇论文最大引用数：
-                    <input type="number" id="maxCitations" value="10" min="1" max="50">
+                    <input type="number" id="maxCitations" value="5" min="1" max="10">
                 </label>
             </div>
             <div class="instructions">
                 <strong>使用说明：</strong>打开Google Scholar，搜索作者，点击作者名字进入个人主页，复制URL粘贴到上方输入框。
-                由于需要抓取数据，分析可能需要几分钟时间。
+                由于需要抓取数据，分析可能需要几分钟时间。<br><br>
+                <strong>注意：</strong>由于Google Scholar的访问限制，实际分析可能会失败。可以先点击"演示模式"查看功能效果。
             </div>
         </div>
 
@@ -427,6 +429,34 @@
 
             if (bounds.length > 0) {
                 map.fitBounds(bounds, { padding: [50, 50] });
+            }
+        }
+
+        async function loadDemo() {
+            // Show loading
+            document.getElementById('loading').classList.remove('hidden');
+            document.getElementById('error').classList.add('hidden');
+            document.getElementById('results').classList.add('hidden');
+            document.getElementById('demoBtn').disabled = true;
+
+            try {
+                const response = await fetch('/api/demo', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({})
+                });
+
+                const data = await response.json();
+                displayResults(data);
+
+            } catch (error) {
+                document.getElementById('error').classList.remove('hidden');
+                document.getElementById('errorMessage').textContent = '演示加载失败: ' + error.message;
+            } finally {
+                document.getElementById('loading').classList.add('hidden');
+                document.getElementById('demoBtn').disabled = false;
             }
         }
 
