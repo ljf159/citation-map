@@ -18,13 +18,13 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize geocoder with custom user agent
-geolocator = Nominatim(user_agent="citation-map-app-v3")
+geolocator = Nominatim(user_agent="citation-map-app-v4")
 
 # Cache for geocoding results
 geocode_cache = {}
 
-# Semantic Scholar API base URL
-SEMANTIC_SCHOLAR_API = "https://api.semanticscholar.org/graph/v1"
+# OpenAlex API base URL
+OPENALEX_API = "https://api.openalex.org"
 
 def geocode_institution(institution):
     """Geocode an institution name to coordinates."""
@@ -39,7 +39,7 @@ def geocode_institution(institution):
         return geocode_cache[institution]
 
     try:
-        time.sleep(0.5)  # Rate limiting for Nominatim
+        time.sleep(0.3)  # Rate limiting for Nominatim
         location = geolocator.geocode(institution, timeout=10)
         if location:
             result = {
@@ -57,83 +57,65 @@ def geocode_institution(institution):
     geocode_cache[institution] = None
     return None
 
-def search_author_by_name(name):
-    """Search for an author by name using Semantic Scholar API."""
+def search_author(name):
+    """Search for an author by name using OpenAlex API."""
     try:
-        url = f"{SEMANTIC_SCHOLAR_API}/author/search"
+        url = f"{OPENALEX_API}/authors"
         params = {
-            'query': name,
-            'limit': 1,
-            'fields': 'authorId,name,affiliations,paperCount,citationCount,hIndex'
+            'search': name,
+            'per_page': 1,
+            'mailto': 'citation-map@example.com'
         }
         response = requests.get(url, params=params, timeout=30)
         response.raise_for_status()
         data = response.json()
 
-        if data.get('data') and len(data['data']) > 0:
-            return data['data'][0]
+        if data.get('results') and len(data['results']) > 0:
+            return data['results'][0]
         return None
     except Exception as e:
         logger.error(f"Error searching author: {e}")
         return None
 
-def get_author_by_id(author_id):
-    """Get author details by Semantic Scholar author ID."""
+def get_author_works(author_id, limit=10):
+    """Get works (papers) by an author."""
     try:
-        url = f"{SEMANTIC_SCHOLAR_API}/author/{author_id}"
+        url = f"{OPENALEX_API}/works"
         params = {
-            'fields': 'authorId,name,affiliations,paperCount,citationCount,hIndex,papers.paperId,papers.title,papers.year,papers.citationCount'
+            'filter': f'author.id:{author_id}',
+            'sort': 'cited_by_count:desc',
+            'per_page': limit,
+            'mailto': 'citation-map@example.com'
         }
         response = requests.get(url, params=params, timeout=30)
         response.raise_for_status()
-        return response.json()
+        return response.json().get('results', [])
     except Exception as e:
-        logger.error(f"Error getting author by ID: {e}")
-        return None
-
-def get_paper_citations(paper_id, limit=10):
-    """Get citations for a paper."""
-    try:
-        url = f"{SEMANTIC_SCHOLAR_API}/paper/{paper_id}/citations"
-        params = {
-            'fields': 'citingPaper.authors,citingPaper.title,citingPaper.year',
-            'limit': limit
-        }
-        response = requests.get(url, params=params, timeout=30)
-        response.raise_for_status()
-        return response.json().get('data', [])
-    except Exception as e:
-        logger.warning(f"Error getting citations for paper {paper_id}: {e}")
+        logger.error(f"Error getting author works: {e}")
         return []
 
-def get_author_details(author_id):
-    """Get author details including affiliation."""
+def get_citing_works(work_id, limit=10):
+    """Get works that cite a specific work."""
     try:
-        url = f"{SEMANTIC_SCHOLAR_API}/author/{author_id}"
+        url = f"{OPENALEX_API}/works"
         params = {
-            'fields': 'name,affiliations'
+            'filter': f'cites:{work_id}',
+            'per_page': limit,
+            'mailto': 'citation-map@example.com'
         }
-        response = requests.get(url, params=params, timeout=10)
+        response = requests.get(url, params=params, timeout=30)
         response.raise_for_status()
-        return response.json()
-    except:
-        return None
+        return response.json().get('results', [])
+    except Exception as e:
+        logger.warning(f"Error getting citing works: {e}")
+        return []
 
-def extract_author_identifier(url_or_name):
-    """Extract author identifier from URL or use as name."""
-    # Check if it's a Semantic Scholar URL
-    ss_match = re.search(r'semanticscholar\.org/author/[^/]+/(\d+)', url_or_name)
-    if ss_match:
-        return ('id', ss_match.group(1))
-
-    # Check if it's a Google Scholar URL (extract name from it or use ID)
-    gs_match = re.search(r'user=([a-zA-Z0-9_-]+)', url_or_name)
-    if gs_match:
-        # We can't use Google Scholar ID directly, return None to show error
-        return ('gs_id', gs_match.group(1))
-
-    # Treat as author name
-    return ('name', url_or_name.strip())
+def extract_institution_from_authorship(authorship):
+    """Extract institution name from authorship data."""
+    institutions = authorship.get('institutions', [])
+    if institutions:
+        return institutions[0].get('display_name', '')
+    return ''
 
 @app.route('/')
 def index():
@@ -145,7 +127,7 @@ def health():
     """Health check endpoint."""
     return jsonify({
         'status': 'ok',
-        'api': 'Semantic Scholar'
+        'api': 'OpenAlex'
     })
 
 @app.route('/api/demo', methods=['POST'])
@@ -183,139 +165,107 @@ def demo_analyze():
     return jsonify(result)
 
 @app.route('/api/analyze', methods=['POST'])
-def analyze_scholar():
-    """Analyze an author's citations using Semantic Scholar API."""
+def analyze():
+    """Analyze an author's citations using OpenAlex API."""
     data = request.json
     query = data.get('url', '').strip()
-    max_papers = min(data.get('max_papers', 3), 10)
-    max_citations_per_paper = min(data.get('max_citations', 5), 20)
+    max_papers = min(data.get('max_papers', 5), 10)
+    max_citations_per_paper = min(data.get('max_citations', 10), 20)
 
     if not query:
-        return jsonify({'error': 'Please enter an author name or Semantic Scholar URL'}), 400
+        return jsonify({'error': 'Please enter an author name'}), 400
 
-    identifier_type, identifier = extract_author_identifier(query)
+    logger.info(f"Analyzing author: {query}")
 
-    # Handle Google Scholar URL
-    if identifier_type == 'gs_id':
-        return jsonify({
-            'error': 'Google Scholar URLs are not supported due to access restrictions. Please enter the author\'s name directly (e.g., "Geoffrey Hinton") or use a Semantic Scholar URL.'
-        }), 400
-
-    logger.info(f"Analyzing author: {identifier} (type: {identifier_type})")
-
-    # Get author info
-    author = None
-    if identifier_type == 'id':
-        author = get_author_by_id(identifier)
-    else:
-        # Search by name
-        search_result = search_author_by_name(identifier)
-        if search_result:
-            author = get_author_by_id(search_result['authorId'])
-
+    # Search for author
+    author = search_author(query)
     if not author:
         return jsonify({
-            'error': f'Could not find author: {identifier}. Please check the spelling or try a different name.'
+            'error': f'Could not find author: {query}. Please check the spelling or try a different name.'
         }), 404
 
+    # Get author info
+    author_id = author.get('id', '').replace('https://openalex.org/', '')
+    author_name = author.get('display_name', 'Unknown')
+
     # Get affiliation
-    affiliations = author.get('affiliations', [])
-    affiliation = affiliations[0] if affiliations else 'Unknown'
+    last_known_institution = author.get('last_known_institution', {})
+    affiliation = last_known_institution.get('display_name', 'Unknown') if last_known_institution else 'Unknown'
 
     result = {
         'author': {
-            'name': author.get('name', 'Unknown'),
+            'name': author_name,
             'affiliation': affiliation,
-            'citations': author.get('citationCount', 0),
-            'h_index': author.get('hIndex', 0),
+            'citations': author.get('cited_by_count', 0),
+            'h_index': author.get('summary_stats', {}).get('h_index', 0),
         },
         'publications': [],
         'citing_authors': [],
         'locations': []
     }
 
-    # Get papers
-    papers = author.get('papers', [])
-    # Sort by citation count and take top papers
-    papers = sorted(papers, key=lambda x: x.get('citationCount', 0) or 0, reverse=True)[:max_papers]
+    # Get author's works
+    works = get_author_works(author_id, max_papers)
 
     all_citing_authors = []
     affiliations_map = {}
 
-    for i, paper in enumerate(papers):
-        logger.info(f"Processing paper {i + 1}/{len(papers)}: {paper.get('title', 'Unknown')[:50]}")
+    for i, work in enumerate(works):
+        logger.info(f"Processing work {i + 1}/{len(works)}: {work.get('title', 'Unknown')[:50]}")
 
         pub_info = {
-            'title': paper.get('title', 'Unknown'),
-            'year': str(paper.get('year', 'Unknown')),
-            'citations': paper.get('citationCount', 0) or 0
+            'title': work.get('title', 'Unknown'),
+            'year': str(work.get('publication_year', 'Unknown')),
+            'citations': work.get('cited_by_count', 0)
         }
         result['publications'].append(pub_info)
 
-        # Get citations for this paper
-        paper_id = paper.get('paperId')
-        if paper_id and pub_info['citations'] > 0:
-            citations = get_paper_citations(paper_id, max_citations_per_paper)
+        # Get citing works
+        work_id = work.get('id', '').replace('https://openalex.org/', '')
+        if work_id and pub_info['citations'] > 0:
+            citing_works = get_citing_works(work_id, max_citations_per_paper)
 
-            # Cache for author affiliations to avoid duplicate lookups
-            author_cache = {}
+            for citing_work in citing_works:
+                # Get authors from citing work
+                authorships = citing_work.get('authorships', [])
 
-            for citation in citations:
-                citing_paper = citation.get('citingPaper', {})
-                if not citing_paper:
-                    continue
+                # Only get first author
+                if authorships:
+                    authorship = authorships[0]
+                    citing_author_name = authorship.get('author', {}).get('display_name', '')
+                    citing_institution = extract_institution_from_authorship(authorship)
 
-                authors = citing_paper.get('authors', [])
-
-                # Only get first author to reduce API calls
-                if authors:
-                    citing_author = authors[0]
-                    author_name = citing_author.get('name', '')
-                    author_id = citing_author.get('authorId', '')
-
-                    # Try to get affiliation from author details (with caching)
-                    affiliation = ''
-                    if author_id:
-                        if author_id in author_cache:
-                            affiliation = author_cache[author_id]
-                        else:
-                            author_details = get_author_details(author_id)
-                            if author_details:
-                                author_affiliations = author_details.get('affiliations', [])
-                                affiliation = author_affiliations[0] if author_affiliations else ''
-                            author_cache[author_id] = affiliation
-
-                    if author_name:
+                    if citing_author_name:
                         citing_info = {
-                            'name': author_name,
-                            'affiliation': affiliation,
-                            'paper_title': citing_paper.get('title', 'Unknown'),
-                            'year': str(citing_paper.get('year', 'Unknown'))
+                            'name': citing_author_name,
+                            'affiliation': citing_institution,
+                            'paper_title': citing_work.get('title', 'Unknown'),
+                            'year': str(citing_work.get('publication_year', 'Unknown'))
                         }
                         all_citing_authors.append(citing_info)
 
                         # Track affiliations for map
-                        if affiliation:
-                            if affiliation not in affiliations_map:
-                                affiliations_map[affiliation] = {
+                        if citing_institution:
+                            if citing_institution not in affiliations_map:
+                                affiliations_map[citing_institution] = {
                                     'count': 0,
                                     'authors': []
                                 }
-                            affiliations_map[affiliation]['count'] += 1
-                            if author_name not in affiliations_map[affiliation]['authors']:
-                                affiliations_map[affiliation]['authors'].append(author_name)
+                            affiliations_map[citing_institution]['count'] += 1
+                            if citing_author_name not in affiliations_map[citing_institution]['authors']:
+                                affiliations_map[citing_institution]['authors'].append(citing_author_name)
 
-            time.sleep(0.2)  # Rate limiting
+            time.sleep(0.1)  # Rate limiting
 
     result['citing_authors'] = all_citing_authors
 
     # Geocode affiliations
     locations = []
-    for affiliation, info in affiliations_map.items():
-        coords = geocode_institution(affiliation)
+    for institution, info in affiliations_map.items():
+        coords = geocode_institution(institution)
         if coords:
             locations.append({
-                'institution': affiliation,
+                'institution': institution,
                 'lat': coords['lat'],
                 'lng': coords['lng'],
                 'count': info['count'],
