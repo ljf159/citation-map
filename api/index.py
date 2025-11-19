@@ -1,13 +1,12 @@
 from flask import Flask, render_template, jsonify, request
 from flask_cors import CORS
-from scholarly import scholarly, ProxyGenerator
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
+import requests
 import re
 import time
 import logging
 import os
-import random
 
 # Get the correct template folder path
 template_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'templates')
@@ -19,40 +18,13 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize geocoder with custom user agent
-geolocator = Nominatim(user_agent="citation-map-app-v2")
+geolocator = Nominatim(user_agent="citation-map-app-v3")
 
 # Cache for geocoding results
 geocode_cache = {}
 
-# Setup proxy for scholarly to avoid being blocked
-def setup_scholarly_proxy():
-    """Setup proxy for scholarly to bypass Google Scholar blocking."""
-    try:
-        pg = ProxyGenerator()
-        # Use free proxies
-        success = pg.FreeProxies()
-        if success:
-            scholarly.use_proxy(pg)
-            logger.info("Proxy setup successful")
-            return True
-    except Exception as e:
-        logger.warning(f"Could not setup proxy: {e}")
-    return False
-
-# Try to setup proxy on startup
-proxy_enabled = setup_scholarly_proxy()
-
-def extract_author_id(url):
-    """Extract Google Scholar author ID from URL."""
-    patterns = [
-        r'user=([a-zA-Z0-9_-]+)',
-        r'citations\?.*user=([a-zA-Z0-9_-]+)',
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, url)
-        if match:
-            return match.group(1)
-    return None
+# Semantic Scholar API base URL
+SEMANTIC_SCHOLAR_API = "https://api.semanticscholar.org/graph/v1"
 
 def geocode_institution(institution):
     """Geocode an institution name to coordinates."""
@@ -85,68 +57,70 @@ def geocode_institution(institution):
     geocode_cache[institution] = None
     return None
 
-def get_author_info(author_id, retries=3):
-    """Get author information from Google Scholar with retries."""
-    for attempt in range(retries):
-        try:
-            logger.info(f"Fetching author {author_id}, attempt {attempt + 1}")
-            author = scholarly.search_author_id(author_id)
-            author = scholarly.fill(author, sections=['basics', 'publications'])
-            logger.info(f"Successfully fetched author: {author.get('name', 'Unknown')}")
-            return author
-        except Exception as e:
-            logger.error(f"Error fetching author info (attempt {attempt + 1}): {e}")
-            if attempt < retries - 1:
-                time.sleep(2 ** attempt)  # Exponential backoff
-                # Try to reset proxy
-                setup_scholarly_proxy()
-    return None
-
-def get_citing_authors_simple(publication, max_citations=5):
-    """Get citing authors with simplified approach."""
-    citing_authors = []
-
+def search_author_by_name(name):
+    """Search for an author by name using Semantic Scholar API."""
     try:
-        # Fill publication to get citations
-        pub_filled = scholarly.fill(publication)
+        url = f"{SEMANTIC_SCHOLAR_API}/author/search"
+        params = {
+            'query': name,
+            'limit': 1,
+            'fields': 'authorId,name,affiliations,paperCount,citationCount,hIndex'
+        }
+        response = requests.get(url, params=params, timeout=30)
+        response.raise_for_status()
+        data = response.json()
 
-        # Get citations for this publication
-        citations = scholarly.citedby(pub_filled)
-
-        count = 0
-        for citation in citations:
-            if count >= max_citations:
-                break
-
-            try:
-                bib = citation.get('bib', {})
-                author_str = bib.get('author', '')
-
-                if author_str:
-                    # Parse authors
-                    authors = author_str.split(' and ')
-                    for author_name in authors[:2]:  # Limit to first 2 authors
-                        author_name = author_name.strip()
-                        if author_name and len(author_name) > 1:
-                            citing_author = {
-                                'name': author_name,
-                                'paper_title': bib.get('title', 'Unknown'),
-                                'year': bib.get('pub_year', 'Unknown'),
-                                'affiliation': ''
-                            }
-                            citing_authors.append(citing_author)
-
-                count += 1
-                time.sleep(0.3)  # Small delay between citations
-
-            except Exception as e:
-                logger.warning(f"Error processing citation: {e}")
-                continue
-
+        if data.get('data') and len(data['data']) > 0:
+            return data['data'][0]
+        return None
     except Exception as e:
-        logger.warning(f"Error getting citations: {e}")
+        logger.error(f"Error searching author: {e}")
+        return None
 
-    return citing_authors
+def get_author_by_id(author_id):
+    """Get author details by Semantic Scholar author ID."""
+    try:
+        url = f"{SEMANTIC_SCHOLAR_API}/author/{author_id}"
+        params = {
+            'fields': 'authorId,name,affiliations,paperCount,citationCount,hIndex,papers.paperId,papers.title,papers.year,papers.citationCount'
+        }
+        response = requests.get(url, params=params, timeout=30)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        logger.error(f"Error getting author by ID: {e}")
+        return None
+
+def get_paper_citations(paper_id, limit=10):
+    """Get citations for a paper."""
+    try:
+        url = f"{SEMANTIC_SCHOLAR_API}/paper/{paper_id}/citations"
+        params = {
+            'fields': 'authors,authors.name,authors.affiliations,title,year',
+            'limit': limit
+        }
+        response = requests.get(url, params=params, timeout=30)
+        response.raise_for_status()
+        return response.json().get('data', [])
+    except Exception as e:
+        logger.warning(f"Error getting citations for paper {paper_id}: {e}")
+        return []
+
+def extract_author_identifier(url_or_name):
+    """Extract author identifier from URL or use as name."""
+    # Check if it's a Semantic Scholar URL
+    ss_match = re.search(r'semanticscholar\.org/author/[^/]+/(\d+)', url_or_name)
+    if ss_match:
+        return ('id', ss_match.group(1))
+
+    # Check if it's a Google Scholar URL (extract name from it or use ID)
+    gs_match = re.search(r'user=([a-zA-Z0-9_-]+)', url_or_name)
+    if gs_match:
+        # We can't use Google Scholar ID directly, return None to show error
+        return ('gs_id', gs_match.group(1))
+
+    # Treat as author name
+    return ('name', url_or_name.strip())
 
 @app.route('/')
 def index():
@@ -158,13 +132,12 @@ def health():
     """Health check endpoint."""
     return jsonify({
         'status': 'ok',
-        'proxy_enabled': proxy_enabled
+        'api': 'Semantic Scholar'
     })
 
 @app.route('/api/demo', methods=['POST'])
 def demo_analyze():
     """Demo endpoint with sample data."""
-    # Sample demo data
     result = {
         'author': {
             'name': 'Demo Author',
@@ -198,82 +171,115 @@ def demo_analyze():
 
 @app.route('/api/analyze', methods=['POST'])
 def analyze_scholar():
-    """Analyze a Google Scholar profile and return citation data."""
+    """Analyze an author's citations using Semantic Scholar API."""
     data = request.json
-    scholar_url = data.get('url', '')
-    max_papers = min(data.get('max_papers', 3), 5)  # Limit to 5 papers max
-    max_citations_per_paper = min(data.get('max_citations', 5), 10)  # Limit to 10 citations max
+    query = data.get('url', '').strip()
+    max_papers = min(data.get('max_papers', 3), 10)
+    max_citations_per_paper = min(data.get('max_citations', 5), 20)
 
-    # Extract author ID from URL
-    author_id = extract_author_id(scholar_url)
-    if not author_id:
-        return jsonify({'error': 'Invalid Google Scholar URL. Please use a URL like: https://scholar.google.com/citations?user=XXXXX'}), 400
+    if not query:
+        return jsonify({'error': 'Please enter an author name or Semantic Scholar URL'}), 400
 
-    logger.info(f"Starting analysis for author ID: {author_id}")
+    identifier_type, identifier = extract_author_identifier(query)
 
-    # Get author information
-    author = get_author_info(author_id)
+    # Handle Google Scholar URL
+    if identifier_type == 'gs_id':
+        return jsonify({
+            'error': 'Google Scholar URLs are not supported due to access restrictions. Please enter the author\'s name directly (e.g., "Geoffrey Hinton") or use a Semantic Scholar URL.'
+        }), 400
+
+    logger.info(f"Analyzing author: {identifier} (type: {identifier_type})")
+
+    # Get author info
+    author = None
+    if identifier_type == 'id':
+        author = get_author_by_id(identifier)
+    else:
+        # Search by name
+        search_result = search_author_by_name(identifier)
+        if search_result:
+            author = get_author_by_id(search_result['authorId'])
+
     if not author:
         return jsonify({
-            'error': 'Could not fetch author information. Google Scholar may be blocking requests. Try the Demo button to see how the app works.'
-        }), 503
+            'error': f'Could not find author: {identifier}. Please check the spelling or try a different name.'
+        }), 404
+
+    # Get affiliation
+    affiliations = author.get('affiliations', [])
+    affiliation = affiliations[0] if affiliations else 'Unknown'
 
     result = {
         'author': {
             'name': author.get('name', 'Unknown'),
-            'affiliation': author.get('affiliation', 'Unknown'),
-            'citations': author.get('citedby', 0),
-            'h_index': author.get('hindex', 0),
+            'affiliation': affiliation,
+            'citations': author.get('citationCount', 0),
+            'h_index': author.get('hIndex', 0),
         },
         'publications': [],
         'citing_authors': [],
         'locations': []
     }
 
-    # Process publications
-    publications = author.get('publications', [])[:max_papers]
+    # Get papers
+    papers = author.get('papers', [])
+    # Sort by citation count and take top papers
+    papers = sorted(papers, key=lambda x: x.get('citationCount', 0) or 0, reverse=True)[:max_papers]
 
     all_citing_authors = []
-    affiliations = {}
+    affiliations_map = {}
 
-    for i, pub in enumerate(publications):
-        logger.info(f"Processing publication {i + 1}/{len(publications)}")
+    for i, paper in enumerate(papers):
+        logger.info(f"Processing paper {i + 1}/{len(papers)}: {paper.get('title', 'Unknown')[:50]}")
 
         pub_info = {
-            'title': pub.get('bib', {}).get('title', 'Unknown'),
-            'year': pub.get('bib', {}).get('pub_year', 'Unknown'),
-            'citations': pub.get('num_citations', 0)
+            'title': paper.get('title', 'Unknown'),
+            'year': str(paper.get('year', 'Unknown')),
+            'citations': paper.get('citationCount', 0) or 0
         }
         result['publications'].append(pub_info)
 
-        # Get citing authors for this publication (only if it has citations)
-        if pub.get('num_citations', 0) > 0:
-            try:
-                citing = get_citing_authors_simple(pub, max_citations_per_paper)
-                for author_info in citing:
-                    all_citing_authors.append(author_info)
+        # Get citations for this paper
+        paper_id = paper.get('paperId')
+        if paper_id and pub_info['citations'] > 0:
+            citations = get_paper_citations(paper_id, max_citations_per_paper)
 
-                    # Track affiliations
-                    affiliation = author_info.get('affiliation', '')
-                    if affiliation:
-                        if affiliation not in affiliations:
-                            affiliations[affiliation] = {
-                                'name': affiliation,
-                                'count': 0,
-                                'authors': []
-                            }
-                        affiliations[affiliation]['count'] += 1
-                        affiliations[affiliation]['authors'].append(author_info['name'])
-            except Exception as e:
-                logger.warning(f"Error getting citations for publication: {e}")
+            for citation in citations:
+                citing_paper = citation.get('citingPaper', {})
+                authors = citing_paper.get('authors', [])
 
-        time.sleep(0.5)  # Delay between publications
+                for citing_author in authors[:2]:  # Limit to first 2 authors per paper
+                    author_name = citing_author.get('name', '')
+                    author_affiliations = citing_author.get('affiliations', [])
+                    affiliation = author_affiliations[0] if author_affiliations else ''
+
+                    if author_name:
+                        citing_info = {
+                            'name': author_name,
+                            'affiliation': affiliation,
+                            'paper_title': citing_paper.get('title', 'Unknown'),
+                            'year': str(citing_paper.get('year', 'Unknown'))
+                        }
+                        all_citing_authors.append(citing_info)
+
+                        # Track affiliations for map
+                        if affiliation:
+                            if affiliation not in affiliations_map:
+                                affiliations_map[affiliation] = {
+                                    'count': 0,
+                                    'authors': []
+                                }
+                            affiliations_map[affiliation]['count'] += 1
+                            if author_name not in affiliations_map[affiliation]['authors']:
+                                affiliations_map[affiliation]['authors'].append(author_name)
+
+            time.sleep(0.2)  # Rate limiting
 
     result['citing_authors'] = all_citing_authors
 
     # Geocode affiliations
     locations = []
-    for affiliation, info in affiliations.items():
+    for affiliation, info in affiliations_map.items():
         coords = geocode_institution(affiliation)
         if coords:
             locations.append({
@@ -281,51 +287,12 @@ def analyze_scholar():
                 'lat': coords['lat'],
                 'lng': coords['lng'],
                 'count': info['count'],
-                'authors': list(set(info['authors']))[:5]
+                'authors': info['authors'][:5]
             })
 
     result['locations'] = locations
 
     logger.info(f"Analysis complete. Found {len(all_citing_authors)} citing authors, {len(locations)} locations")
-
-    return jsonify(result)
-
-@app.route('/api/quick-analyze', methods=['POST'])
-def quick_analyze():
-    """Quick analysis - just get author info and publications."""
-    data = request.json
-    scholar_url = data.get('url', '')
-
-    author_id = extract_author_id(scholar_url)
-    if not author_id:
-        return jsonify({'error': 'Invalid Google Scholar URL'}), 400
-
-    # Get basic author info
-    author = get_author_info(author_id)
-    if not author:
-        return jsonify({'error': 'Could not fetch author information. Google Scholar may be blocking requests.'}), 503
-
-    result = {
-        'author': {
-            'name': author.get('name', 'Unknown'),
-            'affiliation': author.get('affiliation', 'Unknown'),
-            'citations': author.get('citedby', 0),
-            'h_index': author.get('hindex', 0),
-        },
-        'publications': [],
-        'citing_authors': [],
-        'locations': []
-    }
-
-    # Get top publications
-    publications = author.get('publications', [])[:10]
-    for pub in publications:
-        pub_info = {
-            'title': pub.get('bib', {}).get('title', 'Unknown'),
-            'year': pub.get('bib', {}).get('pub_year', 'Unknown'),
-            'citations': pub.get('num_citations', 0)
-        }
-        result['publications'].append(pub_info)
 
     return jsonify(result)
 
