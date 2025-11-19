@@ -96,7 +96,7 @@ def get_paper_citations(paper_id, limit=10):
     try:
         url = f"{SEMANTIC_SCHOLAR_API}/paper/{paper_id}/citations"
         params = {
-            'fields': 'authors,authors.name,authors.affiliations,title,year',
+            'fields': 'citingPaper.authors,citingPaper.title,citingPaper.year',
             'limit': limit
         }
         response = requests.get(url, params=params, timeout=30)
@@ -105,6 +105,19 @@ def get_paper_citations(paper_id, limit=10):
     except Exception as e:
         logger.warning(f"Error getting citations for paper {paper_id}: {e}")
         return []
+
+def get_author_details(author_id):
+    """Get author details including affiliation."""
+    try:
+        url = f"{SEMANTIC_SCHOLAR_API}/author/{author_id}"
+        params = {
+            'fields': 'name,affiliations'
+        }
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except:
+        return None
 
 def extract_author_identifier(url_or_name):
     """Extract author identifier from URL or use as name."""
@@ -244,14 +257,33 @@ def analyze_scholar():
         if paper_id and pub_info['citations'] > 0:
             citations = get_paper_citations(paper_id, max_citations_per_paper)
 
+            # Cache for author affiliations to avoid duplicate lookups
+            author_cache = {}
+
             for citation in citations:
                 citing_paper = citation.get('citingPaper', {})
+                if not citing_paper:
+                    continue
+
                 authors = citing_paper.get('authors', [])
 
-                for citing_author in authors[:2]:  # Limit to first 2 authors per paper
+                # Only get first author to reduce API calls
+                if authors:
+                    citing_author = authors[0]
                     author_name = citing_author.get('name', '')
-                    author_affiliations = citing_author.get('affiliations', [])
-                    affiliation = author_affiliations[0] if author_affiliations else ''
+                    author_id = citing_author.get('authorId', '')
+
+                    # Try to get affiliation from author details (with caching)
+                    affiliation = ''
+                    if author_id:
+                        if author_id in author_cache:
+                            affiliation = author_cache[author_id]
+                        else:
+                            author_details = get_author_details(author_id)
+                            if author_details:
+                                author_affiliations = author_details.get('affiliations', [])
+                                affiliation = author_affiliations[0] if author_affiliations else ''
+                            author_cache[author_id] = affiliation
 
                     if author_name:
                         citing_info = {
