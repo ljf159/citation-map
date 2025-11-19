@@ -100,7 +100,7 @@ def geocode_institution(institution):
 def get_author_info(author_id):
     """Get author information from Google Scholar with random delay."""
     try:
-        time.sleep(random.uniform(1, 3))  # Random delay to avoid blocking
+        time.sleep(random.uniform(0.5, 1))  # Reduced delay
         author = scholarly.search_author_id(author_id)
         author = scholarly.fill(author, sections=['basics', 'publications'])
         return author
@@ -111,7 +111,7 @@ def get_author_info(author_id):
 def get_publication_details(pub):
     """Fill publication details with random delay."""
     try:
-        time.sleep(random.uniform(1, 3))
+        time.sleep(random.uniform(0.5, 1))  # Reduced delay
         return scholarly.fill(pub)
     except Exception as e:
         logger.warning(f"Error filling publication: {e}")
@@ -128,7 +128,7 @@ def get_citing_papers(publication, max_citations=10):
                 break
             citing_papers.append(citation)
             count += 1
-            time.sleep(random.uniform(0.5, 1.5))  # Small delay between citations
+            time.sleep(random.uniform(0.3, 0.8))  # Reduced delay
     except Exception as e:
         logger.warning(f"Error getting citations: {e}")
     return citing_papers
@@ -140,7 +140,7 @@ def get_author_affiliation(author_name):
         return author_cache[author_name]
 
     try:
-        time.sleep(random.uniform(1, 3))
+        time.sleep(random.uniform(0.5, 1))  # Reduced delay
         search_query = scholarly.search_author(author_name)
         author_result = next(search_query, None)
 
@@ -259,7 +259,6 @@ def analyze_scholar():
     publications = sorted(publications, key=lambda x: x.get('num_citations', 0), reverse=True)[:max_papers]
 
     all_citing_authors = []
-    affiliations_map = {}
 
     for i, pub in enumerate(publications):
         logger.info(f"Processing publication {i + 1}/{len(publications)}")
@@ -289,46 +288,23 @@ def analyze_scholar():
                         author_name = authors[0].strip()
 
                         if author_name and len(author_name) > 1:
-                            # Get affiliation for this author
-                            affiliation = get_author_affiliation(author_name)
-
+                            # Skip affiliation lookup to avoid timeout
+                            # Just record the author name
                             citing_info = {
                                 'name': author_name,
-                                'affiliation': affiliation,
+                                'affiliation': '',  # Skip for now to avoid timeout
                                 'paper_title': bib.get('title', 'Unknown'),
                                 'year': bib.get('pub_year', 'Unknown')
                             }
                             all_citing_authors.append(citing_info)
 
-                            # Track affiliations for map
-                            if affiliation:
-                                if affiliation not in affiliations_map:
-                                    affiliations_map[affiliation] = {
-                                        'count': 0,
-                                        'authors': []
-                                    }
-                                affiliations_map[affiliation]['count'] += 1
-                                if author_name not in affiliations_map[affiliation]['authors']:
-                                    affiliations_map[affiliation]['authors'].append(author_name)
-
     result['citing_authors'] = all_citing_authors
 
-    # Geocode affiliations
-    locations = []
-    for affiliation, info in affiliations_map.items():
-        coords = geocode_institution(affiliation)
-        if coords:
-            locations.append({
-                'institution': affiliation,
-                'lat': coords['lat'],
-                'lng': coords['lng'],
-                'count': info['count'],
-                'authors': info['authors'][:5]
-            })
+    # Note: Skipping affiliation lookup and geocoding to avoid timeout
+    # Locations will be empty for now
+    result['locations'] = []
 
-    result['locations'] = locations
-
-    logger.info(f"Analysis complete. Found {len(all_citing_authors)} citing authors, {len(locations)} locations")
+    logger.info(f"Analysis complete. Found {len(all_citing_authors)} citing authors")
 
     return jsonify(result)
 
