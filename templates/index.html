@@ -303,7 +303,7 @@
         <div class="input-section">
             <div class="input-group">
                 <input type="text" id="scholarUrl"
-                       placeholder="输入Google Scholar个人主页URL，例如：https://scholar.google.com/citations?user=XXXXXX"
+                       placeholder="输入作者英文全名，例如：Geoffrey Hinton"
                        value="">
                 <button id="analyzeBtn" onclick="analyzeScholar()">开始分析</button>
                 <button id="demoBtn" onclick="loadDemo()" style="background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);">演示模式</button>
@@ -311,16 +311,16 @@
             <div class="options">
                 <label>
                     分析论文数量：
-                    <input type="number" id="maxPapers" value="3" min="1" max="5">
+                    <input type="number" id="maxPapers" value="5" min="1" max="10">
                 </label>
                 <label>
                     每篇论文最大引用数：
-                    <input type="number" id="maxCitations" value="5" min="1" max="10">
+                    <input type="number" id="maxCitations" value="10" min="1" max="20">
                 </label>
             </div>
             <div class="instructions">
-                <strong>使用说明：</strong>打开Google Scholar，搜索作者，点击作者名字进入个人主页，复制URL粘贴到上方输入框。
-                由于需要抓取数据并使用代理，分析可能需要1-2分钟。
+                <strong>使用说明：</strong>直接输入作者的英文全名（如 "Geoffrey Hinton" 或 "Fei-Fei Li"）。
+                数据来源于 OpenAlex 开放学术数据库，覆盖超过 2.5 亿篇论文。
             </div>
         </div>
 
@@ -465,7 +465,7 @@
             const maxCitations = document.getElementById('maxCitations').value;
 
             if (!url) {
-                alert('请输入Google Scholar URL');
+                alert('请输入作者姓名');
                 return;
             }
 
