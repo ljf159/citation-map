@@ -1,3 +1,20 @@
+"""
+Citation Map API Module.
+
+This module provides the backend logic for the Citation Map application, specifically
+tailored for serverless deployment (e.g., Vercel, Render). It handles Google Scholar
+data extraction, proxy management, geocoding of institutions, and API endpoints for
+analyzing citation networks.
+
+Attributes:
+    app (Flask): The Flask application instance.
+    logger (logging.Logger): Logger for the application.
+    geolocator (Nominatim): Geocoding service instance.
+    geocode_cache (dict): Cache for storing geocoded institution coordinates.
+    author_cache (dict): Cache for storing author affiliations.
+    proxy_enabled (bool): Flag indicating if the proxy setup was successful.
+"""
+
 from flask import Flask, render_template, jsonify, request
 from flask_cors import CORS
 from scholarly import scholarly, ProxyGenerator
@@ -30,7 +47,14 @@ author_cache = {}
 
 # Setup proxy for scholarly
 def setup_proxy():
-    """Setup proxy for scholarly to bypass Google Scholar blocking."""
+    """
+    Configure a proxy for the `scholarly` library to bypass Google Scholar restrictions.
+
+    Attempts to find and set up free proxies using `ProxyGenerator`.
+
+    Returns:
+        bool: True if proxy setup was successful, False otherwise.
+    """
     try:
         pg = ProxyGenerator()
         success = pg.FreeProxies()
@@ -46,7 +70,17 @@ def setup_proxy():
 proxy_enabled = setup_proxy()
 
 def clean_affiliation(affiliation_string):
-    """Clean affiliation string to extract institution name."""
+    """
+    Clean and extract the institution name from an affiliation string.
+
+    Removes titles, positions, and other noise to isolate the institution's name.
+
+    Args:
+        affiliation_string (str): The raw affiliation string (e.g., "Professor at MIT").
+
+    Returns:
+        str: The cleaned institution name, or the original string if no cleaning was applicable.
+    """
     if not affiliation_string:
         return ''
 
@@ -68,7 +102,19 @@ def clean_affiliation(affiliation_string):
     return affiliation_string.strip()
 
 def geocode_institution(institution):
-    """Geocode an institution name to coordinates."""
+    """
+    Geocode an institution name to its geographical coordinates.
+
+    Uses the Nominatim geocoding service to find the latitude and longitude
+    of a given institution. Results are cached.
+
+    Args:
+        institution (str): The name of the institution to geocode.
+
+    Returns:
+        dict or None: A dictionary containing 'lat', 'lng', and 'address' if successful,
+                      otherwise None.
+    """
     if not institution or institution.strip() == '':
         return None
 
@@ -98,7 +144,19 @@ def geocode_institution(institution):
     return None
 
 def get_author_info(author_id):
-    """Get author information from Google Scholar with random delay."""
+    """
+    Fetch detailed information about an author from Google Scholar.
+
+    Retrieves basic profile information and the list of publications for the
+    specified author ID. Includes a random delay to avoid rate limiting.
+
+    Args:
+        author_id (str): The Google Scholar author ID.
+
+    Returns:
+        dict or None: A dictionary containing author details if successful,
+                      otherwise None.
+    """
     try:
         time.sleep(random.uniform(1, 3))  # Random delay to avoid blocking
         author = scholarly.search_author_id(author_id)
@@ -109,7 +167,18 @@ def get_author_info(author_id):
         return None
 
 def get_publication_details(pub):
-    """Fill publication details with random delay."""
+    """
+    Retrieve full details for a specific publication.
+
+    Fills in additional details for a publication object using `scholarly`.
+    Includes a random delay to avoid rate limiting.
+
+    Args:
+        pub (dict): The partial publication object.
+
+    Returns:
+        dict: The fully filled publication object, or the original object on error.
+    """
     try:
         time.sleep(random.uniform(1, 3))
         return scholarly.fill(pub)
@@ -118,7 +187,17 @@ def get_publication_details(pub):
         return pub
 
 def get_citing_papers(publication, max_citations=10):
-    """Get papers that cite this publication."""
+    """
+    Retrieve a list of papers that cite a given publication.
+
+    Args:
+        publication (dict): The publication object.
+        max_citations (int, optional): The maximum number of citing papers to retrieve.
+                                       Defaults to 10.
+
+    Returns:
+        list[dict]: A list of citing paper objects.
+    """
     citing_papers = []
     try:
         citations = scholarly.citedby(publication)
@@ -134,7 +213,18 @@ def get_citing_papers(publication, max_citations=10):
     return citing_papers
 
 def get_author_affiliation(author_name):
-    """Get affiliation for a citing author."""
+    """
+    Determine the affiliation of an author by name.
+
+    Searches for the author on Google Scholar to find their affiliation.
+    Results are cached and cleaned.
+
+    Args:
+        author_name (str): The name of the author.
+
+    Returns:
+        str: The cleaned affiliation string, or an empty string if not found.
+    """
     # Check cache first
     if author_name in author_cache:
         return author_cache[author_name]
@@ -157,7 +247,15 @@ def get_author_affiliation(author_name):
     return ''
 
 def extract_author_id(url):
-    """Extract Google Scholar author ID from URL."""
+    """
+    Extract the Google Scholar author ID from a given URL.
+
+    Args:
+        url (str): The full URL of the Google Scholar profile.
+
+    Returns:
+        str or None: The extracted author ID if found, otherwise None.
+    """
     patterns = [
         r'user=([a-zA-Z0-9_-]+)',
         r'citations\?.*user=([a-zA-Z0-9_-]+)',
@@ -170,12 +268,23 @@ def extract_author_id(url):
 
 @app.route('/')
 def index():
-    """Render the main page."""
+    """
+    Render the main landing page of the application.
+
+    Returns:
+        str: The rendered HTML content of the index page.
+    """
     return render_template('index.html')
 
 @app.route('/api/health', methods=['GET'])
 def health():
-    """Health check endpoint."""
+    """
+    Perform a health check of the API.
+
+    Returns:
+        Response: A JSON response indicating the status ('ok') and whether
+                  the proxy is enabled.
+    """
     return jsonify({
         'status': 'ok',
         'proxy_enabled': proxy_enabled
@@ -183,7 +292,16 @@ def health():
 
 @app.route('/api/demo', methods=['POST'])
 def demo_analyze():
-    """Demo endpoint with sample data."""
+    """
+    Provide a demo analysis with pre-defined sample data.
+
+    This endpoint simulates the `analyze_scholar` response without making
+    external API calls, useful for testing or demonstration purposes.
+
+    Returns:
+        Response: A JSON response containing sample author, publication,
+                  citing authors, and location data.
+    """
     result = {
         'author': {
             'name': 'Demo Author',
@@ -217,7 +335,25 @@ def demo_analyze():
 
 @app.route('/api/analyze', methods=['POST'])
 def analyze_scholar():
-    """Analyze a Google Scholar profile and return citation data."""
+    """
+    Analyze a Google Scholar profile and return citation data.
+
+    This is the main analysis endpoint. It takes a profile URL, extracts data,
+    finds citing papers and authors, and geocodes their affiliations.
+
+    JSON Payload:
+        url (str): The Google Scholar profile URL.
+        max_papers (int, optional): Max number of papers to analyze. Defaults to 3 (capped at 5).
+        max_citations (int, optional): Max citations per paper to analyze. Defaults to 5 (capped at 10).
+
+    Returns:
+        Response: A JSON response with comprehensive citation and location data.
+
+    status codes:
+        200: Success.
+        400: Invalid URL.
+        503: Service unavailable (e.g., Google Scholar blocking).
+    """
     data = request.json
     scholar_url = data.get('url', '')
     max_papers = min(data.get('max_papers', 3), 5)  # Limit to reduce blocking risk

@@ -1,76 +1,98 @@
-# Citation Map - 学术引用地图
+# Citation Map
 
-一个可视化Google Scholar作者引用网络的Web应用，展示全球学术引用分布。
+A web application that visualizes the global impact of academic research by mapping the locations of authors who cite a specific researcher's work on Google Scholar.
 
-## 功能特点
+## Table of Contents
 
-- 输入Google Scholar个人主页URL，自动分析作者信息
-- 获取作者所有论文的引用数据
-- 提取引用作者的姓名和所属机构
-- 在世界地图上可视化引用者的地理分布
-- 统计引用数据，包括总引用次数、H指数等
+- [Description](#description)
+- [Features](#features)
+- [Tech Stack](#tech-stack)
+- [Installation](#installation)
+- [Usage](#usage)
+- [API Endpoints](#api-endpoints)
+- [License](#license)
 
-## 技术栈
+## Description
 
-- **后端**: Python Flask
-- **数据抓取**: scholarly (Google Scholar API)
-- **地理编码**: geopy + OpenStreetMap Nominatim
-- **前端**: HTML5, CSS3, JavaScript
-- **地图可视化**: Leaflet.js
+Citation Map allows researchers to see where their work is being cited around the world. By inputting a Google Scholar profile URL, the application analyzes the author's publications, retrieves citing papers, identifies the citing authors and their affiliations, and visualizes this data on an interactive world map.
 
-## 安装
+## Features
 
-1. 克隆项目：
-```bash
-git clone <repository-url>
-cd citation-map
-```
+- **Profile Analysis**: Automatically extracts author information from a Google Scholar profile URL.
+- **Citation Network**: Retrieves data on publications and the authors who have cited them.
+- **Affiliation Extraction**: Identifies the institutional affiliation of citing authors.
+- **Geospatial Visualization**: Geocodes institution names to coordinates and displays them on a world map using Leaflet.js.
+- **Statistics**: Provides summary statistics such as total citations and H-index.
+- **Demo Mode**: Includes a demo mode to visualize sample data without making external API calls.
 
-2. 创建虚拟环境（推荐）：
-```bash
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# 或 venv\Scripts\activate  # Windows
-```
+## Tech Stack
 
-3. 安装依赖：
-```bash
-pip install -r requirements.txt
-```
+- **Backend**: Python, Flask
+- **Data Retrieval**: `scholarly` (Google Scholar API wrapper)
+- **Geocoding**: `geopy` + OpenStreetMap Nominatim
+- **Frontend**: HTML5, CSS3, JavaScript
+- **Maps**: Leaflet.js
+- **Deployment**: Compatible with Vercel and Render
 
-## 运行
+## Installation
 
-启动应用：
-```bash
-python app.py
-```
+### Prerequisites
 
-然后在浏览器中打开：http://localhost:5000
+- Python 3.8 or higher
+- pip (Python package manager)
 
-## 使用方法
+### Steps
 
-1. 打开Google Scholar (https://scholar.google.com)
-2. 搜索你想分析的学者
-3. 点击学者姓名进入个人主页
-4. 复制浏览器地址栏的URL（格式如：`https://scholar.google.com/citations?user=XXXXXX`）
-5. 粘贴到应用的输入框中
-6. 设置分析参数（论文数量、每篇论文最大引用数）
-7. 点击"开始分析"
+1.  **Clone the repository**:
+    ```bash
+    git clone <repository-url>
+    cd citation-map
+    ```
 
-## 注意事项
+2.  **Create a virtual environment (Recommended)**:
+    ```bash
+    python -m venv venv
+    # On Linux/macOS:
+    source venv/bin/activate
+    # On Windows:
+    venv\Scripts\activate
+    ```
 
-- 由于需要抓取Google Scholar数据，分析过程可能需要几分钟
-- Google Scholar可能有访问频率限制，请勿过于频繁使用
-- 地理编码使用免费的OpenStreetMap服务，有一定的请求限制
-- 部分作者可能没有公开的机构信息
+3.  **Install dependencies**:
+    ```bash
+    pip install -r requirements.txt
+    ```
 
-## API端点
+## Usage
 
-### POST /api/analyze
+### Local Development
 
-分析Google Scholar作者的引用数据。
+1.  **Start the application**:
+    ```bash
+    python app.py
+    ```
 
-**请求体**:
+2.  **Access the app**:
+    Open your web browser and navigate to `http://localhost:5000`.
+
+3.  **Analyze a Profile**:
+    - Go to Google Scholar (https://scholar.google.com).
+    - Find the profile of the researcher you want to analyze.
+    - Copy the URL from the browser address bar (e.g., `https://scholar.google.com/citations?user=XXXXXX`).
+    - Paste the URL into the input box on the Citation Map app.
+    - Click "Start Analysis".
+
+### Notes
+- The analysis process may take several minutes due to the need to scrape data from Google Scholar and geocode locations.
+- Rate limiting is implemented to avoid being blocked by Google Scholar or the geocoding service.
+
+## API Endpoints
+
+### `POST /api/analyze`
+
+Analyzes a Google Scholar profile.
+
+**Request Body:**
 ```json
 {
   "url": "https://scholar.google.com/citations?user=XXXXXX",
@@ -79,29 +101,37 @@ python app.py
 }
 ```
 
-**响应**:
+**Response:**
 ```json
 {
   "author": {
-    "name": "作者姓名",
-    "affiliation": "所属机构",
-    "citations": 1000,
-    "h_index": 20
+    "name": "Author Name",
+    "affiliation": "Institution",
+    "citations": 1234,
+    "h_index": 25
   },
   "publications": [...],
   "citing_authors": [...],
   "locations": [
     {
-      "institution": "机构名称",
+      "institution": "University Name",
       "lat": 40.7128,
       "lng": -74.0060,
       "count": 5,
-      "authors": ["作者1", "作者2"]
+      "authors": ["Author A", "Author B"]
     }
   ]
 }
 ```
 
-## 许可证
+### `POST /api/demo`
+
+Returns sample data for demonstration purposes.
+
+### `GET /api/health`
+
+Health check endpoint to verify if the service is running and if the proxy is enabled.
+
+## License
 
 MIT License
